@@ -1,0 +1,2 @@
+#!/usr/bin/execlineb -P
+apt-get-install-min $packages
