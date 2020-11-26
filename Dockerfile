@@ -16,7 +16,6 @@ RUN apt-get-install-min \
         autoconf \
         automake \
         build-essential \
-        command-not-found \
         curl \
         dialog \
         ed \
