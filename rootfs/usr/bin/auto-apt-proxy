@@ -1,0 +1,110 @@
+#!/bin/sh
+
+set -e
+
+tmpfile=$(mktemp)
+cleanup() {
+  rm -f "$tmpfile"
+}
+trap cleanup INT EXIT TERM
+
+hit() {
+  timeout 5 /usr/lib/apt/apt-helper \
+    -o Acquire::http::Proxy=DIRECT \
+    download-file "$@" "$tmpfile" 2>&1
+}
+
+detect_apt_cacher() {
+  local ip="$1"
+  local proxy=http://$ip:3142
+  hit -o "Acquire::http::Proxy::${ip}=DIRECT" "$proxy" >/dev/null 2>&1 || true;
+  if [ -s "$tmpfile" ] && grep -q -i '<title>Apt-cacher' "$tmpfile"; then
+    echo "$proxy"
+    return 0
+  fi
+  return 1
+}
+
+detect_apt_cacher_ng() {
+  local ip="$1"
+  local proxy=http://$ip:3142
+  if hit -o "Acquire::http::Proxy::${ip}=DIRECT" "$proxy" | grep -q -i '406.*usage.information'; then
+    echo "$proxy"
+    return 0
+  fi
+  return 1
+}
+
+detect_approx() {
+  local ip="$1"
+  local proxy=http://$ip:9999
+  hit -o "Acquire::http::Proxy::${ip}=DIRECT" "$proxy" >/dev/null 2>&1 || true;
+  if [ -s "$tmpfile" ] && grep -q -i '<title>approx\s*server</title>' "$tmpfile"; then
+    echo "$proxy"
+    return 0
+  fi
+  return 1
+}
+
+# NOTE: This does NOT check MDNS/DNS-SD (avahi/zeroconf/bonjour) records.
+#       If you want that, use squid-deb-proxy-client, which depends on avahi.
+#
+# FIXME: if there are multiple matching SRV records, we should make a
+#        weighted random choice from the one(s) with the highest priority.
+#        For now, we make a uniformly random choice from all records (shuf + exit).
+#
+# NOTE: We don't check that it "looks like" a known apt proxy (hit + grep -q).
+#       This is because
+#        1) the other detectors are just GUESSING hosts and ports.
+#           You might accidentally run a non-apt-proxy on 127.0.0.1:9999, but
+#           you can't accidentally create an _apt_proxy SRV record!
+#        2) refactoring the grep -q's out of detect_* is tedious and boring.
+#        3) there's no grep -q for squid, which I want to use. ;-)
+#
+# NOTE: no need for if/then/else and return 0/1 because:
+#        * if awk matches something, it prints it and exits zero.
+#        * if hostname or apt-helper fail, awk matches nothing, so exits non-zero.
+#        * set -e ignores errors from apt-helper (no pipefail) and hostname (no ???).
+detect_DNS_SRV_record() {
+  /usr/lib/apt/apt-helper srv-lookup _apt_proxy._tcp."$(hostname --domain)" 2>/dev/null |
+  shuf |
+  awk '/^[^#]/{print "http://" $1 ":" $4;found=1;exit}END{exit !found}'
+}
+
+detect() {
+  # If a SRV record is found, use it and guess no further.
+  detect_DNS_SRV_record && return 0
+
+  if command -v ip >/dev/null; then
+    gateway=$(ip route | awk '/default/ { print($3) }')
+  elif busybox ip >/dev/null 2>&1; then
+    gateway=$(busybox ip route | awk '/default/ { print($3) }')
+  else
+    gateway=''
+  fi
+  for ip in 127.0.0.1 $gateway; do
+    detect_apt_cacher_ng "$ip" && return 0
+    detect_approx "$ip"        && return 0
+    detect_apt_cacher "$ip"    && return 0
+  done
+  return 0
+}
+
+if [ $# -eq 0 ]; then
+  detect
+else
+  case "$1" in
+    ftp://*|http://*|https://*|file://*)
+      # APT mode: first argument is an URI
+      detect
+      ;;
+    *)
+      # wrapper mode: execute command using the detected proxy
+      proxy=$(detect || true)
+      if [ -n "$proxy" ]; then
+        export http_proxy="$proxy"
+        export HTTP_PROXY="$proxy"
+      fi
+      exec "$@"
+  esac
+fi
