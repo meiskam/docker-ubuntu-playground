@@ -1,4 +1,4 @@
-FROM meiskam/ubuntu-s6:18.04
+FROM meiskam/ubuntu-s6:20.04
 
 RUN apt-get-install-min \
         apt-utils \
