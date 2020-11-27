@@ -1,15 +1,15 @@
 FROM meiskam/ubuntu-s6:18.04
 
+# reinstall every package to get their man pages
+RUN yes | /usr/local/sbin/unminimize && \
+    apt-cleanup-min
+
 RUN apt-get-install-min \
         apt-utils \
         auto-apt-proxy
 
 # root filesystem
 COPY rootfs /
-
-# reinstall every package to get their man pages
-RUN yes | /usr/local/sbin/unminimize && \
-    apt-cleanup-min
 
 RUN apt-get-install-min \
         aptitude \
