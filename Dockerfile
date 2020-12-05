@@ -40,6 +40,8 @@ RUN apt-get-install-min \
         strace \
         tmux \
         traceroute \
+        unrar \
+        unzip \
         vim \
         wget \
         whois \
